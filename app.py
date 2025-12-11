@@ -5,7 +5,10 @@ import time
 from PIL import Image
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
+import yaml
+import datetime
 
+CONFIG_PATH = "./config/comic.yaml"
 API_ADDER = "api.2025copy.com"
 pdf_switch = 1
 pdf_password=None
@@ -411,10 +414,10 @@ def make_pdf(path, number, password=None):
 def handle_chapters_results(results,start_num,end_num,path):
     if not results:
         print("没有获取到结果")
-        return
+        return 0
     if results.get("code") != 200:
         print(f"搜索失败: {results.get('message', '未知错误')}")
-        return
+        return 0
     results_data = results.get("results", {})
     comic_list = results_data.get("list", [])
     offset = results_data.get("offset", 0)
@@ -503,11 +506,14 @@ def handle_chapters_results(results,start_num,end_num,path):
 
             print("下载完成!")
             print(f"成功下载: {success_count}/{len(contents)} 页")
+            if success_count < len(contents):
+                return 0
             if pdf_switch == 1:
                 if pdf_password is None:
                     make_pdf(output_dir,len(contents))
                 else:
                     make_pdf(output_dir,len(contents),pdf_password)
+            return 1
 
 def download_comic_image(start, end, path):
     print("开始下载")
@@ -515,10 +521,11 @@ def download_comic_image(start, end, path):
         # 首先获取章节信息,根据start计算页码
         page = int((start-1 )/ 50 + 1)
         results = get_chapters(path, page)
-        handle_chapters_results(results,start,end,path)
+        res = handle_chapters_results(results,start,end,path)
         if page*50 > end:
             break
         start += 50
+    return res
 
 def print_main_menu():
     """
@@ -562,6 +569,19 @@ def view_comic_detail_function():
     results = get_comic(path)
     print_comic_results(results)
     input("回车返回首页: ")
+
+def get_latest_chapter(path):
+    """获取最新章节数量"""
+    results = get_chapters(path,1)
+    if not results:
+        print("没有获取到结果")
+        return 0
+    if results.get("code") != 200:
+        print(f"搜索失败: {results.get('message', '未知错误')}")
+        return 0
+    results_data = results.get("results", {})
+    total = results_data.get("total", 0)
+    return total
 
 def download_comic_function():
     print("   3. 下载漫画功能")
@@ -668,7 +688,75 @@ def git_action_main():
     comic = "haizeiwang"
     download_comic_image(1,1,comic)
 
+def generate_default_config():
+    """生成默认配置文件（初次运行时自动创建）"""
+    default_config = {
+        "global": {
+            "pdf_switch": 0,
+            "pdf_password": "None"
+        },
+        "comics": []
+    }
+    os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        yaml.safe_dump(default_config, f, indent=2, allow_unicode=True,sort_keys=False)
+    print(f"【首次运行】已自动生成默认配置文件 → {CONFIG_PATH}")
+    print("请修改配置文件中的漫画URL、名称等信息后重新运行！")
+
+def load_config():
+    if not os.path.exists(CONFIG_PATH):
+        generate_default_config()
+        # 生成默认配置后，提示用户修改并退出（避免直接运行示例配置报错）
+        exit(0)
+    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+def save_config(config):
+    """更新YAML配置/状态文件（覆盖写入）"""
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        yaml.safe_dump(config, f, indent=2, allow_unicode=True,sort_keys=False)
+
+def check_and_download_comics():
+    """检查所有漫画更新，有更新则下载"""
+    global pdf_switch  # 声明使用全局变量
+    global pdf_password
+    print(f"\n===== 开始检查更新=====")
+    #读取配置
+    config = load_config()
+    global_config = config["global"]
+    pdf_switch = global_config["pdf_switch"]
+    pdf_password = global_config["pdf_password"]
+    comics = config["comics"]
+    # 检测是否有有效漫画配置
+    if not comics:
+        print("配置文件中未添加任何漫画，请修改 comic.yaml 后重新运行！")
+        return
+
+    for idx, comic in enumerate(comics):
+        comic_name = comic["name"]
+        comic_path = comic["path"]
+        comic_last_chapter = comic["last_chapter"]
+        comic_last_check_time = comic["last_check_time"]
+        print(f"\n【{comic_name}】上次下载至第{comic_last_chapter}章")
+        total = get_latest_chapter(comic_path)
+        if total<= comic_last_chapter:
+            print(f"该漫画更新至{total}章，不需要更新")
+            comics[idx]["last_check_time"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            save_config(config)
+            continue
+        print(f"【{comic_name}】检测到更新！最新：{total}章（需下载{comic_last_chapter + 1}~{total}章）")
+        for chapter in range(comic_last_chapter + 1, total + 1):
+            if download_comic_image(chapter, chapter,comic_path):
+                comics[idx]["last_chapter"] = chapter
+                save_config(config)
+            else:
+                print(f"【{comic_name}】第{chapter}章下载失败，终止后续章节下载")
+                break
+        comics[idx]["last_check_time"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        save_config(config)
+    print(f"\n===== 检查更新完成 =====\n")
 
 if __name__ == "__main__":
     #window_main()
-    git_action_main()
+    #git_action_main()
+    check_and_download_comics()

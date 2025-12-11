@@ -24,7 +24,16 @@ jobs:
       - name: 上传爬虫结果
         uses: actions/upload-artifact@v4
         with:
-          name: crawl-results  # 工件名称（自定义）
-          path: ./out/      # 要上传的目录/文件，支持通配符如./out/*.csv
+          name: comic  # 工件名称（自定义）
+          path: ./out/      # 要上传的目录/文件
           retention-days: 90   # 保留天数1-90，默认30天
           if-no-files-found: warn  # 无文件时仅警告不失败
+      - name: 提交配置到Git
+        run: |
+          git config --global user.name "GitHub Action"
+          git config --global user.email "action@github.com"
+          git add ./config/*
+          git commit -m "Add config or log $(date +'%Y-%m-%d_%H-%M-%S')" || echo "无新日志需提交"
+          git push origin master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

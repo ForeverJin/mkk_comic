@@ -70,6 +70,11 @@ def get_terminal_width():
     except:
         return 80  # 默认宽度
 
+def is_running_in_github_actions() -> bool:
+    """判断程序是否在 GitHub Actions 中运行"""
+    # 检测 GitHub Actions 专属环境变量
+    return os.getenv("GITHUB_ACTIONS", "false").lower() == "true"
+
 def print_title_style():
     """渐变色彩标题"""
     clear_terminal()
@@ -683,11 +688,6 @@ def window_main():
         #选择功能
         select_function(function)
 
-def git_action_main():
-    #github_action测试
-    comic = "haizeiwang"
-    download_comic_image(1,1,comic)
-
 def generate_default_config():
     """生成默认配置文件（初次运行时自动创建）"""
     default_config = {
@@ -757,6 +757,8 @@ def check_and_download_comics():
     print(f"\n===== 检查更新完成 =====\n")
 
 if __name__ == "__main__":
-    #window_main()
-    #git_action_main()
-    check_and_download_comics()
+    if is_running_in_github_actions():
+        print("运行环境：GitHub Actions（自动化模式）")
+        check_and_download_comics()
+    else:
+        window_main()

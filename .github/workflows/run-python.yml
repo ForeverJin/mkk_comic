@@ -32,48 +32,86 @@ jobs:
           path: ./out/      # 要上传的目录/文件
           retention-days: 90   # 保留天数1-90，默认30天
           if-no-files-found: warn  # 无文件时仅警告不失败
-      # 分卷打包
-#      - name: 分卷打包漫画文件
-#        run: |
-#          # 创建打包目录
-#          mkdir -p ./comic_pack
-#          # 分卷打包：每卷45MB（规避QQ中转站3GB上限），输出到pack目录
-#          # 若文件小于45MB，自动生成单文件；大于则分卷
-#          zip -r -s 45m ./comic_pack/comic_latest.zip ./out
-#          # 查看打包结果
-#          ls -lh ./comic_pack/
-#      # 步骤7：发送邮件（附带所有分卷文件）
-#      - name: 发送超大附件邮件
-#        uses: dawidd6/action-send-mail@v3
-#        with:
-#          server_address: smtp.163.com
-#          server_port: 587
-#          username: ${{ secrets.EMAIL_USERNAME }} # 发件人邮箱
-#          password: ${{ secrets.EMAIL_PASSWORD }} #
-#          # 邮件内容
-#          subject: 【漫画更新】${{ steps.size.outputs.run_date }}
-#          body: |
-#            📥 本次漫画下载任务已完成！
-#            ├─ 运行时间：${{ steps.size.outputs.run_date }}
-#            ├─ 打包分卷：每卷2.8GB
-#            ├─ 保存路径：./out/
-#            ├─ 备用下载：${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-#            └─ 有效期：15天
-#
-#            📌 解压说明：
-#            1. 将所有分卷文件放在同一目录
-#            2. 执行命令：unzip comic_latest.zip（自动合并分卷）
-#            3. 若解压失败，尝试：zip -F comic_latest.zip --out comic_merged.zip && unzip comic_merged.zip
-#
-#            📥项目地址:https://github.com/mkktop/mkk_comic
-#          # 收件人（可填多个，用逗号分隔）
-#          to: ${{ secrets.TARGET_EMAIL }}
-#          # 发件人显示名称
-#          from: mkk_comic 自动同步
-#          # 附件：匹配所有分卷文件（.zip/.z01/.z02...）
-#          attachments: ./comic_pack/comic_latest.z*
-#          # 启用TLS加密（必须）
-#          secure: true
+      - name: 打包漫画文件
+        run: |
+          # 创建打包目录
+          mkdir -p ./comic_pack
+          zip -r ./comic_pack/comic_latest.zip ./out
+          # 查看打包结果
+          ls -lh ./comic_pack/
+      # 步骤7：发送邮件（附带所有分卷文件）
+      - name: 打包漫画文件
+        id: pack
+        run: |
+          mkdir -p ./comic_pack
+          zip -r ./comic_pack/comic_latest.zip ./out
+          # 获取压缩包大小（字节）
+          file_size=$(stat -c%s "./comic_pack/comic_latest.zip")
+          echo "压缩包大小: $file_size 字节 ($(($file_size/1024/1024)) MB)"
+          # 设置阈值：45MB = 45*1024*1024 = 47185920 字节
+          threshold=47185920
+          if [ $file_size -gt $threshold ]; then
+            echo "文件大小超过上限，不发送邮件"
+            echo "should_send=false" >> $GITHUB_OUTPUT
+          else
+            echo "文件大小未超过上限，不发送附件"
+            echo "should_send=true" >> $GITHUB_OUTPUT
+          fi
+          # 同时保存实际大小
+          echo "size=$file_size" >> $GITHUB_OUTPUT
+          echo "size_mb=$(($file_size/1024/1024))" >> $GITHUB_OUTPUT
+
+      - name: 发送超大附件邮件
+        uses: dawidd6/action-send-mail@v3
+        if: steps.pack.outputs.should_send == 'true'  # 只有在should_send为true时才发送
+        with:
+          server_address: smtp.163.com
+          server_port: 587
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject:
+            【漫画更新】${{ steps.size.outputs.run_date }} (大小: ${{ steps.pack.outputs.size_mb }}MB)
+          body: |
+            📥 本次漫画下载任务已完成！
+            ├─ 运行时间：${{ steps.size.outputs.run_date }}
+            ├─ 打包大小：${{ steps.pack.outputs.size_mb }} MB
+            ├─ 保存路径：./out/
+            ├─ 备用下载：${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            └─ 有效期：15天
+
+            📌 解压说明：
+            1. 将所有分卷文件放在同一目录
+            2. 执行命令：unzip comic_latest.zip
+            3. 若解压失败，尝试：zip -F comic_latest.zip --out comic_merged.zip && unzip comic_merged.zip
+
+            📥项目地址:https://github.com/mkktop/mkk_comic
+          to: ${{ secrets.TARGET_EMAIL }}
+          from: mkk_comic 自动同步
+          attachments: ./comic_pack/comic_latest.zip
+          secure: true
+
+      - name: 漫画下载成功通知(不发送附件)
+        if: steps.pack.outputs.should_send == 'false'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.163.com
+          server_port: 587
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: 【漫画更新】${{ steps.size.outputs.run_date }}
+          body: |
+            📭 本次漫画下载任务已完成，附件过大请手动下载。
+            ├─ 运行时间：${{ steps.size.outputs.run_date }}
+            ├─ 打包大小：${{ steps.pack.outputs.size_mb }} MB
+            ├─ 保存路径：./out/
+            ├─ 备用下载：${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            └─ 有效期：15天
+
+            📥 项目地址：https://github.com/mkktop/mkk_comic
+            如需手动检查，请访问项目仓库查看详细日志。
+          to: ${{ secrets.TARGET_EMAIL }}
+          from: mkk_comic 自动同步
+          secure: true
       - name: 提交配置到Git
         run: |
           git config --global user.name "GitHub Action"

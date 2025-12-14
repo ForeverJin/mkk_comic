@@ -1,13 +1,13 @@
-name: 运行Python脚本  # 自定义工作流名称
+name: 运行Python脚本  # 工作流名称
 on:
   push:  # 触发条件：代码推送时运行
     branches: [master]  # 目标分支（可修改）
   schedule:
     - cron: '0 18 * * *'  # 北京时间每天凌晨2点运行（UTC+8 → 18+8=2）
-  workflow_dispatch:  # 允许手动触发（方便测试）
+  workflow_dispatch:  # 允许手动触发
 jobs:
   run-script:
-    runs-on: ubuntu-latest  # 运行环境（可选windows-latest/macos-latest）
+    runs-on: ubuntu-latest  # 运行环境
     permissions:
       contents: write  # 允许提交代码到仓库
     steps:
@@ -17,22 +17,21 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'  # 指定与脚本兼容的Python版本
-          cache: 'pip'  # 可选：缓存依赖加速安装
+          cache: 'pip'
       - name: 安装依赖库
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt  # 安装依赖
       - name: 执行Python脚本
-        run: python app.py  # 替换为你的脚本文件名
-      # 执行脚本步骤后添加
+        run: python app.py
       - name: 上传爬虫结果
         uses: actions/upload-artifact@v4
         with:
-          name: comic  # 工件名称（自定义）
+          name: comic  # 工件名称
           path: ./out/      # 要上传的目录/文件
-          retention-days: 90   # 保留天数1-90，默认30天
+          retention-days: 90   # 保留天数1-90
           if-no-files-found: warn  # 无文件时仅警告不失败
-      # 步骤7：发送邮件（附带所有分卷文件）
+      # 发送邮件
       - name: 打包漫画文件
         id: pack
         run: |
@@ -56,8 +55,19 @@ jobs:
           # 同时保存实际大小
           echo "size=$file_size" >> $GITHUB_OUTPUT
           echo "size_mb=$(($file_size/1024/1024))" >> $GITHUB_OUTPUT
+      - name: 上传文件到 file.io
+        id: upload
+        run: |
+          # 1. 安装命令行工具
+          pip install file.io-cli-tddschn[citation:2]
+          # 2. 执行上传，并将输出链接存入环境变量
+          # -q 用于静默模式，适合自动化场景
+          DOWNLOAD_URL=$(file.io-cli -q ./comic_pack/comic_latest.zip)
+          echo "文件下载链接: $DOWNLOAD_URL"
+          # 3. 将链接保存为步骤输出，供后续使用
+          echo "download_url=$DOWNLOAD_URL" >> $GITHUB_OUTPUT
 
-      - name: 漫画下载成功通知(送附件)
+      - name: 漫画下载成功通知(45MB以内发送附件)
         uses: dawidd6/action-send-mail@v3
         if: steps.pack.outputs.should_send == 'true'  # 只有在should_send为true时才发送
         with:
@@ -72,6 +82,7 @@ jobs:
             ├─ 运行时间：${{ steps.size.outputs.run_date }}
             ├─ 打包大小：${{ steps.pack.outputs.size_mb }} MB
             ├─ 保存路径：./out/
+            ├─ 一次性下载链接：${{ steps.upload.outputs.download_url }}
             ├─ 备用下载：${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
             └─ 有效期：15天
 
@@ -86,7 +97,7 @@ jobs:
           attachments: ./comic_pack/comic_latest.zip
           secure: true
 
-      - name: 漫画下载成功通知(不发送附件)
+      - name: 漫画下载成功通知(超过45MB不发送附件)
         if: steps.pack.outputs.should_send == 'false'
         uses: dawidd6/action-send-mail@v3
         with:
@@ -100,6 +111,7 @@ jobs:
             ├─ 运行时间：${{ steps.size.outputs.run_date }}
             ├─ 打包大小：${{ steps.pack.outputs.size_mb }} MB
             ├─ 保存路径：./out/
+            ├─ 一次性下载链接：${{ steps.upload.outputs.download_url }}
             ├─ 备用下载：${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
             └─ 有效期：15天
 

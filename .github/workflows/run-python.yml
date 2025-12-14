@@ -32,13 +32,6 @@ jobs:
           path: ./out/      # 要上传的目录/文件
           retention-days: 90   # 保留天数1-90，默认30天
           if-no-files-found: warn  # 无文件时仅警告不失败
-      - name: 打包漫画文件
-        run: |
-          # 创建打包目录
-          mkdir -p ./comic_pack
-          zip -r ./comic_pack/comic_latest.zip ./out
-          # 查看打包结果
-          ls -lh ./comic_pack/
       # 步骤7：发送邮件（附带所有分卷文件）
       - name: 打包漫画文件
         id: pack
@@ -70,7 +63,7 @@ jobs:
           username: ${{ secrets.EMAIL_USERNAME }}
           password: ${{ secrets.EMAIL_PASSWORD }}
           subject:
-            【漫画更新】${{ steps.size.outputs.run_date }} (大小: ${{ steps.pack.outputs.size_mb }}MB)
+            【漫画更新】
           body: |
             📥 本次漫画下载任务已完成！
             ├─ 运行时间：${{ steps.size.outputs.run_date }}
@@ -98,7 +91,7 @@ jobs:
           server_port: 587
           username: ${{ secrets.EMAIL_USERNAME }}
           password: ${{ secrets.EMAIL_PASSWORD }}
-          subject: 【漫画更新】${{ steps.size.outputs.run_date }}
+          subject: 【漫画更新】
           body: |
             📭 本次漫画下载任务已完成，附件过大请手动下载。
             ├─ 运行时间：${{ steps.size.outputs.run_date }}

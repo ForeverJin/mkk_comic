@@ -43,18 +43,21 @@ jobs:
           echo "压缩包大小: $file_size 字节 ($(($file_size/1024/1024)) MB)"
           # 设置阈值：45MB = 45*1024*1024 = 47185920 字节
           threshold=47185920
-          if [ $file_size -gt $threshold ]; then
+          if [ -z "${{ secrets.EMAIL_USERNAME }}" ]; then
+            echo "未设置邮箱，不发送邮件"
+            echo "should_send=NO" >> $GITHUB_OUTPUT
+          elif [ $file_size -gt $threshold ]; then
             echo "文件大小超过上限，不发送邮件"
             echo "should_send=false" >> $GITHUB_OUTPUT
           else
-            echo "文件大小未超过上限，不发送附件"
+            echo "文件大小未超过上限，发送附件"
             echo "should_send=true" >> $GITHUB_OUTPUT
           fi
           # 同时保存实际大小
           echo "size=$file_size" >> $GITHUB_OUTPUT
           echo "size_mb=$(($file_size/1024/1024))" >> $GITHUB_OUTPUT
 
-      - name: 发送超大附件邮件
+      - name: 漫画下载成功通知(送附件)
         uses: dawidd6/action-send-mail@v3
         if: steps.pack.outputs.should_send == 'true'  # 只有在should_send为true时才发送
         with:

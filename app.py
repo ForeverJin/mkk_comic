@@ -7,6 +7,8 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
 import yaml
 import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 CONFIG_PATH = "./config/comic.yaml"
 API_ADDER = "api.2025copy.com"
@@ -449,66 +451,10 @@ def handle_chapters_results(results,start_num,end_num,path):
             words = chapter["words"]
             print(f"开始下载: {comic_name} - {chapter_name}")
             print(f"总页数: {len(contents)}")
-            # 下载计数器
-            success_count = 0
-            failed_pages = []
-            for i, word_index in enumerate(words):
-                page_num = i + 1  # 当前页码（从1开始）
-                filename = f"{page_num:03d}.jpg"  # 格式化为三位数
-                filepath = os.path.join(output_dir, filename)
-                retry_count = 0
-                max_retries = 5
-                success = False
-                
-                while retry_count < max_retries and not success:
-                    try:
-                        img_url = contents[word_index]["url"]
-                        print(f"正在下载第 {page_num:03d}/{len(contents):03d} 页...", end=" ")
-                        response = requests.get(img_url, headers=headers, timeout=30)
-                        if response.status_code == 200:
-                            # 保存图片
-                            with open(filepath, 'wb') as f:
-                                f.write(response.content)
-                            success_count += 1
-                            print("✓ 成功")
-                            success = True
-                        else:
-                            retry_count += 1
-                            if retry_count < max_retries:
-                                print(f"✗ 失败 (HTTP {response.status_code})，正在尝试第 {retry_count+1}/{max_retries} 次重试...")
-                                time.sleep(1)
-                            else:
-                                print(f"✗ 失败 (HTTP {response.status_code})，已达到最大重试次数")
-                                failed_pages.append(page_num)
-                    except requests.exceptions.Timeout:
-                        retry_count += 1
-                        if retry_count < max_retries:
-                            print(f"✗ 失败 (请求超时)，正在尝试第 {retry_count+1}/{max_retries} 次重试...")
-                            time.sleep(1)
-                        else:
-                            print(f"✗ 失败 (请求超时)，已达到最大重试次数")
-                            failed_pages.append(page_num)
-                    except requests.exceptions.ConnectionError:
-                        retry_count += 1
-                        if retry_count < max_retries:
-                            print(f"✗ 失败 (连接错误)，正在尝试第 {retry_count+1}/{max_retries} 次重试...")
-                            time.sleep(0.1)
-                        else:
-                            print(f"✗ 失败 (连接错误)，已达到最大重试次数")
-                            failed_pages.append(page_num)
-                    except Exception as e:
-                        retry_count += 1
-                        if retry_count < max_retries:
-                            print(f"✗ 失败 ({str(e)})，正在尝试第 {retry_count+1}/{max_retries} 次重试...")
-                            time.sleep(1)
-                        else:
-                            print(f"✗ 失败 ({str(e)})，已达到最大重试次数")
-                            failed_pages.append(page_num)
-                
-                if not success:
-                    failed_pages.append(page_num)
-                time.sleep(0.5)
-
+            
+            # 使用多线程下载图片
+            success_count = download_images_multithreaded(contents, words, output_dir, headers)
+            
             print("下载完成!")
             print(f"成功下载: {success_count}/{len(contents)} 页")
             if success_count < len(contents):
@@ -519,6 +465,109 @@ def handle_chapters_results(results,start_num,end_num,path):
                 else:
                     make_pdf(output_dir,len(contents),pdf_password)
             return 1
+
+def download_images_multithreaded(contents, words, output_dir, headers, max_workers=5):
+    """
+    使用多线程下载图片
+    :param contents: 图片信息列表
+    :param words: 图片索引列表
+    :param output_dir: 输出目录
+    :param headers: 请求头
+    :param max_workers: 最大线程数
+    :return: 成功下载的图片数量
+    """
+    success_count = 0
+    failed_pages = []
+    
+    # 创建线程池
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # 提交下载任务
+        future_to_page = {}
+        for i, word_index in enumerate(words):
+            page_num = i + 1
+            filename = f"{page_num:03d}.jpg"
+            filepath = os.path.join(output_dir, filename)
+            
+            future = executor.submit(download_single_image, contents[word_index]["url"], filepath, headers, page_num, len(contents))
+            future_to_page[future] = page_num
+    
+        # 处理完成的任务
+        for future in as_completed(future_to_page):
+            page_num = future_to_page[future]
+            try:
+                success = future.result()
+                if success:
+                    success_count += 1
+                else:
+                    failed_pages.append(page_num)
+            except Exception as e:
+                print(f"下载第 {page_num} 页时发生异常: {e}")
+                failed_pages.append(page_num)
+    
+    if failed_pages:
+        print(f"以下页面下载失败: {failed_pages}")
+    
+    return success_count
+
+
+def download_single_image(img_url, filepath, headers, page_num, total_pages):
+    """
+    下载单张图片
+    :param img_url: 图片URL
+    :param filepath: 保存路径
+    :param headers: 请求头
+    :param page_num: 页码
+    :param total_pages: 总页数
+    :return: 是否下载成功
+    """
+    retry_count = 0
+    max_retries = 5
+    success = False
+    
+    while retry_count < max_retries and not success:
+        try:
+            print(f"正在下载第 {page_num:03d}/{total_pages:03d} 页...", end=" ")
+            response = requests.get(img_url, headers=headers, timeout=30)
+            if response.status_code == 200:
+                # 保存图片
+                with open(filepath, 'wb') as f:
+                    f.write(response.content)
+                print("✓ 成功")
+                success = True
+            else:
+                retry_count += 1
+                if retry_count < max_retries:
+                    print(f"✗ 失败 (HTTP {response.status_code})，正在尝试第 {retry_count+1}/{max_retries} 次重试...")
+                    time.sleep(1)
+                else:
+                    print(f"✗ 失败 (HTTP {response.status_code})，已达到最大重试次数")
+        except requests.exceptions.Timeout:
+            retry_count += 1
+            if retry_count < max_retries:
+                print(f"✗ 失败 (请求超时)，正在尝试第 {retry_count+1}/{max_retries} 次重试...")
+                time.sleep(1)
+            else:
+                print(f"✗ 失败 (请求超时)，已达到最大重试次数")
+        except requests.exceptions.ConnectionError:
+            retry_count += 1
+            if retry_count < max_retries:
+                print(f"✗ 失败 (连接错误)，正在尝试第 {retry_count+1}/{max_retries} 次重试...")
+                time.sleep(0.1)
+            else:
+                print(f"✗ 失败 (连接错误)，已达到最大重试次数")
+        except Exception as e:
+            retry_count += 1
+            if retry_count < max_retries:
+                print(f"✗ 失败 ({str(e)})，正在尝试第 {retry_count+1}/{max_retries} 次重试...")
+                time.sleep(1)
+            else:
+                print(f"✗ 失败 ({str(e)})，已达到最大重试次数")
+        
+        if not success:
+            time.sleep(0.5)  # 每次重试后稍作延迟
+    
+    return success
+
 
 def download_comic_image(start, end, path):
     print("开始下载")

@@ -7,8 +7,12 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
 import yaml
 import datetime
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
+import logging
+import re
+from logging.handlers import TimedRotatingFileHandler
 
 CONFIG_PATH = "./config/comic.yaml"
 API_ADDER = "api.2025copy.com"
@@ -60,6 +64,56 @@ class Color:
     BG_BRIGHT_MAGENTA = "\033[105m"
     BG_BRIGHT_CYAN = "\033[106m"
     BG_BRIGHT_WHITE = "\033[107m"
+
+def setup_rotating_logger():
+    # 1. 创建日志器（命名为项目名，避免与其他日志器冲突）
+    logger = logging.getLogger("mkk_comic")
+    logger.setLevel(logging.DEBUG)  # 日志器总级别（需≤处理器级别）
+    logger.propagate = False  # 防止日志向上传播（避免重复输出）
+
+    # 清空已有Handler（防止重复配置）
+    if logger.handlers:
+        logger.handlers.clear()
+
+    # 2. 确保日志目录存在
+    log_dir = "./logs"
+    os.makedirs(log_dir, exist_ok=True)
+    log_file = os.path.join(log_dir, f'data_{datetime.now().strftime("%Y-%m-%d")}.log')
+
+    # 3. 创建按时间轮转的文件Handler（核心配置）
+    # when='D'：按天轮转；interval=1：每1天轮转一次；backupCount=7：保留7个备份（即7天日志）
+    file_handler = TimedRotatingFileHandler(
+        filename=log_file,          # 基础日志文件名
+        when='D',                   # 轮转单位：D(天)、H(小时)、M(分钟)、S(秒)
+        interval=1,                 # 每1天轮转一次
+        backupCount=7,              # 保留7个备份文件（超过自动删除）
+        encoding='utf-8',           # 中文编码，避免乱码
+        delay=False,                # 立即创建日志文件
+        utc=True                   # 使用本地时间（True则用UTC时间）
+    )
+
+    # 可选：自定义轮转文件名（默认格式：app.log.2025-12-17）
+    file_handler.suffix = "%Y-%m-%d"  # 轮转文件后缀（按日期命名）
+    # 过滤非日期后缀的文件（避免删除其他文件）
+    file_handler.extMatch = re.compile(r"^\d{4}-\d{2}-\d{2}(\.\w+)?$")
+
+    # 4. 创建控制台Handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)  # 控制台只输出INFO及以上
+
+    # 5. 定义日志格式（包含时间、模块、行号等关键信息）
+    log_formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(filename)s:%(lineno)d - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
+    file_handler.setFormatter(log_formatter)
+    console_handler.setFormatter(log_formatter)
+
+    # 6. 将Handler添加到日志器
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+
+    return logger
 
 def clear_terminal():
     """清除终端屏幕"""
@@ -150,20 +204,20 @@ def search_copy_manga(keyword, page_num=1):
         return data
 
     except requests.exceptions.RequestException as e:
-        print(f"请求错误: {e}")
+        logger.warning(f"请求错误: {e}")
         return None
     except json.JSONDecodeError as e:
-        print(f"JSON解析错误: {e}")
+        logger.warning(f"JSON解析错误: {e}")
         return None
 
 def print_search_results(results):
     """打印搜索结果"""
     if not results:
-        print("没有获取到结果")
+        logger.warning("没有获取到结果")
         return
 
     if results.get("code") != 200:
-        print(f"搜索失败: {results.get('message', '未知错误')}")
+        logger.warning(f"搜索失败: {results.get('message', '未知错误')}")
         return
     #获取结果
     results_data = results.get("results", {})
@@ -172,28 +226,28 @@ def print_search_results(results):
     offset = results_data.get("offset", 0)
     comic_list = results_data.get("list", [])
 
-    print(f"\n搜索结果: 共找到 {total} 本漫画")
-    print(f"当前显示第 {offset // limit + 1} 页，每页 {limit} 本")
+    logger.info(f"\n搜索结果: 共找到 {total} 本漫画")
+    logger.info(f"当前显示第 {offset // limit + 1} 页，每页 {limit} 本")
 
     print_separate()
     for index, comic in enumerate(comic_list, start=offset + 1):
-        print(f"\n{index}. {comic.get('name', '未知标题')}")
+        logger.info(f"\n{index}. {comic.get('name', '未知标题')}")
         author = comic.get("author", [])
         for i,a in enumerate(author, start=1):
-            print(f"   作者: {a.get('name', '未知作者')}")
-        print(f"   分类: {comic.get('alias', '未知分类')}")
-        print(f"   路径: {comic.get('path_word', '无路径')}")
-        print(f"   封面: {comic.get('cover', '无路径')}")
+            logger.info(f"   作者: {a.get('name', '未知作者')}")
+        logger.info(f"   分类: {comic.get('alias', '未知分类')}")
+        logger.info(f"   路径: {comic.get('path_word', '无路径')}")
+        logger.info(f"   封面: {comic.get('cover', '无路径')}")
         print_separate()
 
 def print_full_json(json_data):
     """打印完整的JSON响应"""
     if json_data:
-        print("\n=== 完整JSON响应 ===")
-        print(json.dumps(json_data, indent=2, ensure_ascii=False))
-        print("=== JSON响应结束 ===")
+        logger.info("\n=== 完整JSON响应 ===")
+        logger.info(json.dumps(json_data, indent=2, ensure_ascii=False))
+        logger.info("=== JSON响应结束 ===")
     else:
-        print("没有JSON数据可打印")
+        logger.info("没有JSON数据可打印")
 
 def get_comic(comic_path_word):
     headers = {
@@ -222,28 +276,28 @@ def get_comic(comic_path_word):
         return data
 
     except requests.exceptions.RequestException as e:
-        print(f"请求错误: {e}")
+        logger.warning(f"请求错误: {e}")
         return None
     except json.JSONDecodeError as e:
-        print(f"JSON解析错误: {e}")
+        logger.warning(f"JSON解析错误: {e}")
         return None
 
 def print_comic_results(results):
     if not results:
-        print("没有获取到结果")
+        logger.warning("没有获取到结果")
         return
 
     if results.get("code") != 200:
-        print(f"搜索失败: {results.get('message', '未知错误')}")
+        logger.warning(f"搜索失败: {results.get('message', '未知错误')}")
         return
     results_data = results.get("results", {})
     comic = results_data.get("comic", {})
-    print(f"   名称: {comic.get('name', '未知作品')}")
-    print(f"   标签: {comic.get('alias', '未知标签')}")
-    print(f"   简介: {comic.get('brief', '未知简介')}")
-    print(f"   最后更新时间: {comic.get('datetime_updated', '未知简介')}")
+    logger.info(f"   名称: {comic.get('name', '未知作品')}")
+    logger.info(f"   标签: {comic.get('alias', '未知标签')}")
+    logger.info(f"   简介: {comic.get('brief', '未知简介')}")
+    logger.info(f"   最后更新时间: {comic.get('datetime_updated', '未知简介')}")
     new_chapter = comic.get("last_chapter", {})
-    print(f"   最新章节: {new_chapter.get('name', '未知章节')}")
+    logger.info(f"   最新章节: {new_chapter.get('name', '未知章节')}")
 
 def get_chapters(comic_path_word,page_num=1):
     headers = {
@@ -274,28 +328,28 @@ def get_chapters(comic_path_word,page_num=1):
         return data
 
     except requests.exceptions.RequestException as e:
-        print(f"请求错误: {e}")
+        logger.warning(f"请求错误: {e}")
         return None
     except json.JSONDecodeError as e:
-        print(f"JSON解析错误: {e}")
+        logger.warning(f"JSON解析错误: {e}")
         return None
 
 def print_chapters_results(results):
     if not results:
-        print("没有获取到结果")
+        logger.warning("没有获取到结果")
         return 0
     if results.get("code") != 200:
-        print(f"搜索失败: {results.get('message', '未知错误')}")
+        logger.warning(f"搜索失败: {results.get('message', '未知错误')}")
         return 0
     results_data = results.get("results", {})
     total = results_data.get("total", 0)
     limit = results_data.get("limit", 50)
     offset = results_data.get("offset", 0)
     comic_list = results_data.get("list", [])
-    print(f"\n搜索结果: 共找到 {total} 个章节")
-    print(f"当前显示第 {offset // limit + 1} 页，每页 {limit} 章节")
+    logger.info(f"\n搜索结果: 共找到 {total} 个章节")
+    logger.info(f"当前显示第 {offset // limit + 1} 页，每页 {limit} 章节")
     for index, comic in enumerate(comic_list, start=offset + 1):
-        print(f"\n第{index}章: {comic.get('name', '未知章节')}    大小:{comic.get('size', '未知大小')}  日期:{comic.get('datetime_created', '未知日期')}")
+        logger.info(f"\n第{index}章: {comic.get('name', '未知章节')}    大小:{comic.get('size', '未知大小')}  日期:{comic.get('datetime_created', '未知日期')}")
     return total
 
 
@@ -322,10 +376,10 @@ def get_comic_image(comic_path_word,uuid):
         return data
 
     except requests.exceptions.RequestException as e:
-        print(f"请求错误: {e}")
+        logger.warning(f"请求错误: {e}")
         return None
     except json.JSONDecodeError as e:
-        print(f"JSON解析错误: {e}")
+        logger.warning(f"JSON解析错误: {e}")
         return None
 
 def images_to_pdf(image_dir, output_pdf, number, password=None):
@@ -342,7 +396,7 @@ def images_to_pdf(image_dir, output_pdf, number, password=None):
         image_path = os.path.join(image_dir, image_name)
 
         if not os.path.exists(image_path):
-            print(f"警告: 图片 {image_path} 不存在，跳过.")
+            logger.warning(f"警告: 图片 {image_path} 不存在，跳过.")
             continue
 
         try:
@@ -361,12 +415,12 @@ def images_to_pdf(image_dir, output_pdf, number, password=None):
 
             c.drawImage(image_path, x, y, width=new_width, height=new_height)
             c.showPage() # 添加新页面
-            print(f"恭喜:图片 {image_name} 添加成功。")
+            logger.info(f"恭喜:图片 {image_name} 添加成功。")
         except Exception as e:
-            print(f"错误: 处理图片 {image_path} 时出错: {e}")
+            logger.warning(f"错误: 处理图片 {image_path} 时出错: {e}")
 
     c.save()
-    print(f"PDF 文件已生成: {output_pdf}")
+    logger.info(f"PDF 文件已生成: {output_pdf}")
 
 def make_pdf(path, number, password=None):
 
@@ -374,28 +428,28 @@ def make_pdf(path, number, password=None):
     if not os.path.isabs(path):
         path = os.path.abspath(path)
 
-    print(f"指定的图片目录: {path}")
+    logger.info(f"指定的图片目录: {path}")
 
     # 获取当前目录名称
     current_dir_name = os.path.basename(path.rstrip('/\\'))
-    print(f"当前目录名称: {current_dir_name}")
+    logger.info(f"当前目录名称: {current_dir_name}")
 
     # 获取上一级目录路径
     parent_dir = os.path.dirname(path)
-    print(f"上一级目录: {parent_dir}")
+    logger.info(f"上一级目录: {parent_dir}")
 
     # 构建输出PDF路径（在上一级目录）
     output_pdf_file = os.path.join(parent_dir, f"{current_dir_name}.pdf")
-    print(f"输出PDF文件: {output_pdf_file}")
+    logger.info(f"输出PDF文件: {output_pdf_file}")
 
     # 确保图片目录存在
     if not os.path.exists(path):
-        print(f"错误: 目录 {path} 不存在.")
+        logger.warning(f"错误: 目录 {path} 不存在.")
         return
 
     # 确保上一级目录存在（用于保存PDF）
     if not os.path.exists(parent_dir):
-        print(f"错误: 上一级目录 {parent_dir} 不存在.")
+        logger.warning(f"错误: 上一级目录 {parent_dir} 不存在.")
         return
 
     # 检查目录中是否有图片文件
@@ -410,20 +464,20 @@ def make_pdf(path, number, password=None):
                 image_files.append(file_path)
 
     if not image_files:
-        print(f"警告: 目录 {path} 中没有找到图片文件")
+        logger.warning(f"警告: 目录 {path} 中没有找到图片文件")
         return
 
-    print(f"找到 {len(image_files)} 张图片")
+    logger.info(f"找到 {len(image_files)} 张图片")
 
     # 调用图片转PDF函数
     images_to_pdf(path, output_pdf_file, number, password)
 
 def handle_chapters_results(results,start_num,end_num,path):
     if not results:
-        print("没有获取到结果")
+        logger.warning("没有获取到结果")
         return 0
     if results.get("code") != 200:
-        print(f"搜索失败: {results.get('message', '未知错误')}")
+        logger.warning(f"搜索失败: {results.get('message', '未知错误')}")
         return 0
     results_data = results.get("results", {})
     comic_list = results_data.get("list", [])
@@ -438,7 +492,7 @@ def handle_chapters_results(results,start_num,end_num,path):
     }
     for index, comic in enumerate(comic_list, start=offset + 1):
         if start_num <= index <= end_num:
-            print(f"\n正在下载第{index}章: {comic.get('name', '未知章节')}    UUID:{comic.get('uuid', '')}")
+            logger.info(f"正在下载第{index}章: {comic.get('name', '未知章节')}    UUID:{comic.get('uuid', '')}")
             data =  get_comic_image(path, comic.get("uuid"))
             chapter = data["results"]["chapter"]
             comic_name = data["results"]["comic"]["name"]
@@ -446,17 +500,17 @@ def handle_chapters_results(results,start_num,end_num,path):
             output_dir = "./out/" + comic_name +"/" + chapter_name
             if not os.path.exists(output_dir):
                 os.makedirs(output_dir)
-                print(f"创建目录: {output_dir}")
+                logger.info(f"创建目录: {output_dir}")
             contents = chapter["contents"]  # 所有图片信息
             words = chapter["words"]
-            print(f"开始下载: {comic_name} - {chapter_name}")
-            print(f"总页数: {len(contents)}")
+            logger.info(f"开始下载: {comic_name} - {chapter_name}")
+            logger.info(f"总页数: {len(contents)}")
             
             # 使用多线程下载图片
             success_count = download_images_multithreaded(contents, words, output_dir, headers)
             
-            print("下载完成!")
-            print(f"成功下载: {success_count}/{len(contents)} 页")
+            logger.info("下载完成!")
+            logger.info(f"成功下载: {success_count}/{len(contents)} 页")
             if success_count < len(contents):
                 return 0
             if pdf_switch == 1:
@@ -501,11 +555,11 @@ def download_images_multithreaded(contents, words, output_dir, headers, max_work
                 else:
                     failed_pages.append(page_num)
             except Exception as e:
-                print(f"下载第 {page_num} 页时发生异常: {e}")
+                logger.warning(f"下载第 {page_num} 页时发生异常: {e}")
                 failed_pages.append(page_num)
     
     if failed_pages:
-        print(f"以下页面下载失败: {failed_pages}")
+        logger.warning(f"以下页面下载失败: {failed_pages}")
     
     return success_count
 
@@ -526,42 +580,42 @@ def download_single_image(img_url, filepath, headers, page_num, total_pages):
     
     while retry_count < max_retries and not success:
         try:
-            print(f"正在下载第 {page_num:03d}/{total_pages:03d} 页...", end=" ")
+            logger.info(f"正在下载第 {page_num:03d}/{total_pages:03d} 页...",)
             response = requests.get(img_url, headers=headers, timeout=30)
             if response.status_code == 200:
                 # 保存图片
                 with open(filepath, 'wb') as f:
                     f.write(response.content)
-                print("✓ 成功")
+                #logger.info("✓ 成功")
                 success = True
             else:
                 retry_count += 1
                 if retry_count < max_retries:
-                    print(f"✗ 失败 (HTTP {response.status_code})，正在尝试第 {retry_count+1}/{max_retries} 次重试...")
+                    logger.warning(f"✗ 失败 (HTTP {response.status_code})，正在尝试第 {retry_count+1}/{max_retries} 次重试...")
                     time.sleep(1)
                 else:
-                    print(f"✗ 失败 (HTTP {response.status_code})，已达到最大重试次数")
+                    logger.warning(f"✗ 失败 (HTTP {response.status_code})，已达到最大重试次数")
         except requests.exceptions.Timeout:
             retry_count += 1
             if retry_count < max_retries:
-                print(f"✗ 失败 (请求超时)，正在尝试第 {retry_count+1}/{max_retries} 次重试...")
+                logger.warning(f"✗ 失败 (请求超时)，正在尝试第 {retry_count+1}/{max_retries} 次重试...")
                 time.sleep(1)
             else:
-                print(f"✗ 失败 (请求超时)，已达到最大重试次数")
+                logger.warning(f"✗ 失败 (请求超时)，已达到最大重试次数")
         except requests.exceptions.ConnectionError:
             retry_count += 1
             if retry_count < max_retries:
-                print(f"✗ 失败 (连接错误)，正在尝试第 {retry_count+1}/{max_retries} 次重试...")
+                logger.warning(f"✗ 失败 (连接错误)，正在尝试第 {retry_count+1}/{max_retries} 次重试...")
                 time.sleep(0.1)
             else:
-                print(f"✗ 失败 (连接错误)，已达到最大重试次数")
+                logger.warning(f"✗ 失败 (连接错误)，已达到最大重试次数")
         except Exception as e:
             retry_count += 1
             if retry_count < max_retries:
-                print(f"✗ 失败 ({str(e)})，正在尝试第 {retry_count+1}/{max_retries} 次重试...")
+                logger.warning(f"✗ 失败 ({str(e)})，正在尝试第 {retry_count+1}/{max_retries} 次重试...")
                 time.sleep(1)
             else:
-                print(f"✗ 失败 ({str(e)})，已达到最大重试次数")
+                logger.warning(f"✗ 失败 ({str(e)})，已达到最大重试次数")
         
         if not success:
             time.sleep(0.5)  # 每次重试后稍作延迟
@@ -570,7 +624,6 @@ def download_single_image(img_url, filepath, headers, page_num, total_pages):
 
 
 def download_comic_image(start, end, path):
-    print("开始下载")
     while True:
         # 首先获取章节信息,根据start计算页码
         page = int((start-1 )/ 50 + 1)
@@ -628,10 +681,10 @@ def get_latest_chapter(path):
     """获取最新章节数量"""
     results = get_chapters(path,1)
     if not results:
-        print("没有获取到结果")
+        logger.warning("没有获取到结果")
         return 0
     if results.get("code") != 200:
-        print(f"搜索失败: {results.get('message', '未知错误')}")
+        logger.warning(f"搜索失败: {results.get('message', '未知错误')}")
         return 0
     results_data = results.get("results", {})
     total = results_data.get("total", 0)
@@ -745,8 +798,8 @@ def generate_default_config():
     os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         yaml.safe_dump(default_config, f, indent=2, allow_unicode=True,sort_keys=False)
-    print(f"【首次运行】已自动生成默认配置文件 → {CONFIG_PATH}")
-    print("请修改配置文件中的漫画URL、名称等信息后重新运行！")
+    logger.info(f"【首次运行】已自动生成默认配置文件 → {CONFIG_PATH}")
+    logger.info("请修改配置文件中的漫画URL、名称等信息后重新运行！")
 
 def load_config():
     if not os.path.exists(CONFIG_PATH):
@@ -765,7 +818,7 @@ def check_and_download_comics():
     """检查所有漫画更新，有更新则下载"""
     global pdf_switch  # 声明使用全局变量
     global pdf_password
-    print(f"\n===== 开始检查更新=====")
+    logger.info(f"===== 开始检查更新=====")
     #读取配置
     config = load_config()
     global_config = config["global"]
@@ -774,7 +827,7 @@ def check_and_download_comics():
     comics = config["comics"]
     # 检测是否有有效漫画配置
     if not comics:
-        print("配置文件中未添加任何漫画，请修改 comic.yaml 后重新运行！")
+        logger.info("配置文件中未添加任何漫画，请修改 comic.yaml 后重新运行！")
         return
 
     for idx, comic in enumerate(comics):
@@ -783,31 +836,32 @@ def check_and_download_comics():
         comic_last_chapter = comic["last_chapter"]
         comic_last_check_time = comic["last_check_time"]
         download_limit = comic["download_limit"]
-        print(f"\n【{comic_name}】上次下载至第{comic_last_chapter}章")
+        logger.info(f"【{comic_name}】上次下载至第{comic_last_chapter}章")
         total = get_latest_chapter(comic_path)
         if total<= comic_last_chapter:
-            print(f"该漫画更新至{total}章，不需要更新")
+            logger.info(f"该漫画更新至{total}章，不需要更新")
             comics[idx]["last_check_time"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             save_config(config)
             continue
-        print(f"【{comic_name}】检测到更新！最新：{total}章")
+        logger.info(f"【{comic_name}】检测到更新！最新：{total}章")
         if comic_last_chapter + download_limit < total:
             total = comic_last_chapter + download_limit
-        print(f"【{comic_name}】最大下载限制为{download_limit}章-需下载{comic_last_chapter + 1}~{total}章）")
+        logger.info(f"【{comic_name}】最大下载限制为{download_limit}章-需下载{comic_last_chapter + 1}~{total}章）")
         for chapter in range(comic_last_chapter + 1, total + 1):
             if download_comic_image(chapter, chapter,comic_path):
                 comics[idx]["last_chapter"] = chapter
                 save_config(config)
             else:
-                print(f"【{comic_name}】第{chapter}章下载失败，终止后续章节下载")
+                logger.info(f"【{comic_name}】第{chapter}章下载失败，终止后续章节下载")
                 break
         comics[idx]["last_check_time"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         save_config(config)
-    print(f"\n===== 检查更新完成 =====\n")
+    logger.info(f"===== 检查更新完成 =====\n")
 
 if __name__ == "__main__":
+    logger = setup_rotating_logger()
     if is_running_in_github_actions():
-        print("运行环境：GitHub Actions（自动化模式）")
+        logger.info("运行环境：GitHub Actions（自动化模式）")
         check_and_download_comics()
     else:
         window_main()

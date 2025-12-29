@@ -4,6 +4,6 @@ global:
 comics:
 - name: 名侦探柯南
   path: kenan
-  last_chapter: 11
+  last_chapter: 13
   download_limit: 2
-  last_check_time: '2025-12-28 03:24:19'
+  last_check_time: '2025-12-29 03:25:01'
